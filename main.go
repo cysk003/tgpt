@@ -3,19 +3,18 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fatih/color"
+	"github.com/olekukonko/ts"
 	"os"
 	"os/signal"
 	"runtime"
 	"strings"
 	"syscall"
-
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fatih/color"
-	"github.com/olekukonko/ts"
 )
 
-const localVersion = "2.2.3"
+const localVersion = "2.3.0"
 
 var bold = color.New(color.Bold)
 var boldBlue = color.New(color.Bold, color.FgBlue)
@@ -26,6 +25,7 @@ var programLoop = true
 var configDir = ""
 var userInput = ""
 var executablePath = ""
+var count = 0;
 
 func main() {
 	execPath, err := os.Executable()
@@ -119,13 +119,15 @@ func main() {
 
 			reader := bufio.NewReader(os.Stdin)
 			bold.Print("Interactive mode started. Press Ctrl + C or type exit to quit.\n\n")
+
+			previousMessages := ""
 			for {
 				boldBlue.Println("╭─ You")
 				boldBlue.Print("╰─> ")
 
 				input, err := reader.ReadString('\n')
 				if err != nil {
-					fmt.Fprintln(os.Stderr, "Error reading input:", err)
+					fmt.Println("Error reading input:", err)
 					break
 				}
 
@@ -136,7 +138,8 @@ func main() {
 							bold.Println("Exiting...")
 							return
 						}
-						getData(input, configDir+"/tgpt", true)
+						responseTxt := getData(input, configDir+"/tgpt", true, previousMessages)
+						previousMessages += responseTxt
 					}
 				}
 			}
@@ -146,6 +149,8 @@ func main() {
 			// Multiline interactive
 			/////////////////////
 			fmt.Print("\nPress Tab to submit and Ctrl + C to exit.\n")
+
+			previousMessages := ""
 
 			for programLoop {
 				fmt.Print("\n")
@@ -157,7 +162,8 @@ func main() {
 					os.Exit(1)
 				}
 				if len(userInput) > 0 {
-					getData(userInput, configDir+"/tgpt", true)
+					responseTxt := getData(userInput, configDir+"/tgpt", true, previousMessages)
+					previousMessages += responseTxt
 				}
 
 			}
@@ -205,7 +211,7 @@ func main() {
 		} else {
 			go loading(&stopSpin)
 			formattedInput := strings.TrimSpace(input)
-			getData(formattedInput, configDir+"/tgpt", false)
+			getData(formattedInput, configDir+"/tgpt", false, "")
 		}
 
 	} else {
@@ -214,7 +220,7 @@ func main() {
 		input := scanner.Text()
 		go loading(&stopSpin)
 		formattedInput := strings.TrimSpace(input)
-		getData(formattedInput, configDir+"/tgpt", false)
+		getData(formattedInput, configDir+"/tgpt", false, "")
 	}
 }
 

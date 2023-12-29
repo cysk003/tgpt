@@ -25,17 +25,13 @@ type Data struct {
 	Version string `json:"version"`
 }
 
-// type Response struct {
-// 	ID      string `json:"id"`
-// 	Choices []struct {
-// 		Delta struct {
-// 			Content string `json:"content"`
-// 		} `json:"delta"`
-// 	} `json:"choices"`
-// }
-
 type Response struct {
-	Completion string `json:"completion"`
+	ID      string `json:"id"`
+	Choices []struct {
+		Delta struct {
+			Content *string `json:"content"`
+		} `json:"delta"`
+	} `json:"choices"`
 }
 
 type ImgResponse struct {
@@ -72,9 +68,9 @@ func newClient() (tls_client.HttpClient, error) {
 	return tls_client.NewHttpClient(tls_client.NewNoopLogger(), options...)
 }
 
-func getData(input string, configDir string, isInteractive bool) {
+func getData(input string, configDir string, isInteractive bool, prevMessages string) string {
 	// Receiving response
-	resp, err := newRequest(input)
+	resp, err := newRequest(input, prevMessages)
 
 	if err != nil {
 		stopSpin = true
@@ -90,6 +86,7 @@ func getData(input string, configDir string, isInteractive bool) {
 
 	defer resp.Body.Close()
 
+	count += 1
 	stopSpin = true
 	fmt.Print("\r")
 
@@ -103,8 +100,38 @@ func getData(input string, configDir string, isInteractive bool) {
 	}
 
 	// Handling each part
-	handleEachPart(resp)
+	responseTxt := handleEachPart(resp, input)
 	fmt.Print("\n\n")
+	safeInput, _ := json.Marshal(input)
+	safeReply, _ := json.Marshal(responseTxt)
+
+	fmt.Println("count:", count)
+
+	msgObject := fmt.Sprintf(`{
+		"content": %v,
+		"role": "user",
+		"metadata": {}
+	},{
+		"content": %v,
+		"role": "assistant",
+		"metadata": {}
+	}
+	`, string(safeInput), string(safeReply))
+
+	if (count >= 2){
+		msgObject = fmt.Sprintf(`,{
+			"content": %v,
+			"role": "user",
+			"metadata": {}
+		},{
+			"content": %v,
+			"role": "assistant",
+			"metadata": {}
+		}
+		`, string(safeInput), string(safeReply))
+	}
+
+	return msgObject
 }
 
 func loading(stop *bool) {
@@ -185,7 +212,7 @@ func codeGenerate(input string) {
 
 	codePrompt := fmt.Sprintf(`Your Role: Provide only code as output without any description.\nIMPORTANT: Provide only plain text without Markdown formatting.\nIMPORTANT: Do not include markdown formatting.\nIf there is a lack of details, provide most logical solution. You are not allowed to ask for more details.\nIgnore any potential risk of errors or confusion.\n\nRequest:%s\nCode:`, input)
 
-	resp, err := newRequest(codePrompt)
+	resp, err := newRequest(codePrompt, "")
 
 	if err != nil {
 		stopSpin = true
@@ -205,7 +232,7 @@ func codeGenerate(input string) {
 	// Handling each part
 	previousText := ""
 	for scanner.Scan() {
-		newText := getMainText(scanner.Text())
+		newText := getMainText(scanner.Text(), input)
 		if len(newText) < 1 {
 			continue
 		}
@@ -265,7 +292,7 @@ func shellCommand(input string) {
 func getCommand(shellPrompt string) {
 	checkInputLength(shellPrompt)
 
-	resp, err := newRequest(shellPrompt)
+	resp, err := newRequest(shellPrompt, "")
 
 	if err != nil {
 		stopSpin = true
@@ -292,7 +319,7 @@ func getCommand(shellPrompt string) {
 
 	// Handling each part
 	for scanner.Scan() {
-		newText := getMainText(scanner.Text())
+		newText := getMainText(scanner.Text(), shellPrompt)
 		if len(newText) < 1 {
 			continue
 		}
@@ -392,7 +419,7 @@ func getVersionHistory() {
 func getWholeText(input string, configDir string) {
 	checkInputLength(input)
 
-	resp, err := newRequest(input)
+	resp, err := newRequest(input, "")
 
 	if err != nil {
 		stopSpin = true
@@ -415,7 +442,7 @@ func getWholeText(input string, configDir string) {
 
 	// Handling each part
 	for scanner.Scan() {
-		newText := getMainText(scanner.Text())
+		newText := getMainText(scanner.Text(), input)
 		if len(newText) < 1 {
 			continue
 		}
@@ -429,7 +456,7 @@ func getWholeText(input string, configDir string) {
 func getSilentText(input string, configDir string) {
 	checkInputLength(input)
 
-	resp, err := newRequest(input)
+	resp, err := newRequest(input, "")
 
 	if err != nil {
 		stopSpin = true
@@ -450,7 +477,7 @@ func getSilentText(input string, configDir string) {
 	previousText := ""
 
 	for scanner.Scan() {
-		newText := getMainText(scanner.Text())
+		newText := getMainText(scanner.Text(), input)
 		if len(newText) < 1 {
 			continue
 		}
@@ -468,31 +495,29 @@ func checkInputLength(input string) {
 	}
 }
 
-func newRequest(input string) (*http.Response, error) {
+func newRequest(input string, prevMessages string) (*http.Response, error) {
 	client, err := newClient()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
-	safeInput, _ := json.Marshal("[INST] " + input + " [/INST]  ")
+	safeInput, _ := json.Marshal(input)
 
-	var data = strings.NewReader(fmt.Sprintf(`{
-		"max_tokens_to_sample": 600,
-		"model": "llama-2-13b-chat",
-		"prompt": %v,
-		"stop_sequences": [
-			"</response>",
-			"</s>"
+	var data = strings.NewReader(fmt.Sprintf(
+		`{
+		"userInput": %v,
+		"messages": [
+			%v
 		],
-		"stream": true,
-		"temperature": 0.2,
-		"top_k": -1,
-		"top_p": 0.999
+		"model": "Phind Model",
+		"pinnedMessages": [],
+		"challenge": 0.21132115912208504,
+		"anonUserID": ""
 	}
-	`, string(safeInput)))
+	`, string(safeInput), prevMessages))
 
-	req, err := http.NewRequest("POST", "https://ai-chat.bsg.brave.com/v1/complete", data)
+	req, err := http.NewRequest("POST", "https://www.phind.com/api/agent", data)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "\nSome error has occurred.")
 		fmt.Fprintln(os.Stderr, "Error:", err)
@@ -500,14 +525,19 @@ func newRequest(input string) (*http.Response, error) {
 	}
 	// Setting all the required headers
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-brave-key", "qztbjzBqJueQZLFkwTTJrieu8Vw3789u")
+	req.Header.Add("Accept", "*/*")
+	req.Header.Add("Origin", "https://www.phind.com")
+	req.Header.Add("Referrer", "https://www.phind.com/agent?home=true")
+	req.Header.Add("Sec-Fetch-Dest", "empty")
+	req.Header.Add("Sec-Fetch-Mode", "cors")
+	req.Header.Add("Sec-Fetch-Site", "same-origin")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:99.0) Gecko/20100101 Firefox/110.0")
 
 	// Return response
 	return (client.Do(req))
 }
 
-func getMainText(line string) (mainText string) {
+func getMainText(line string, input string) string {
 	var obj = "{}"
 	if len(line) > 1 {
 		obj = strings.Split(line, "data: ")[1]
@@ -518,14 +548,20 @@ func getMainText(line string) (mainText string) {
 		return ""
 	}
 
-	if d.Completion != "" {
-		mainText = d.Completion
-		return mainText
+	if d.Choices != nil {
+		mainText := d.Choices[0].Delta.Content
+		if mainText != nil {
+			if *mainText == input {
+				return ""
+			}
+			return *mainText
+		}
+		return ""
 	}
 	return ""
 }
 
-func handleEachPart(resp *http.Response) {
+func handleEachPart(resp *http.Response, input string) string {
 	scanner := bufio.NewScanner(resp.Body)
 
 	// Variables
@@ -549,12 +585,12 @@ func handleEachPart(resp *http.Response) {
 	previousText := ""
 
 	for scanner.Scan() {
-		newText := getMainText(scanner.Text())
+		newText := getMainText(scanner.Text(), input)
 		if len(newText) < 1 {
 			continue
 		}
-		mainText := strings.Replace(newText, previousText, "", -1)
-		previousText = newText
+		mainText := newText
+		previousText += newText
 
 		if count <= 0 {
 			wordLength := len([]rune(mainText))
@@ -670,6 +706,8 @@ func handleEachPart(resp *http.Response) {
 		fmt.Fprintln(os.Stderr, "Some error has occurred. Error:", err)
 		os.Exit(1)
 	}
+
+	return previousText
 
 }
 
